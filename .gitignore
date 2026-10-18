@@ -1,0 +1,6 @@
+.env
+data/
+node_modules/
+
+# Private working notes (code review), not shared
+issues.md

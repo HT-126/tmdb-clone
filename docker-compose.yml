@@ -1,0 +1,66 @@
+services:
+  mysql:
+    image: mysql:8.4
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      TEST_DB_NAME: ${TEST_DB_NAME}
+    ports:
+      # Only this computer can connect (127.0.0.1), not the rest of the network.
+      # Host port comes from DB_PORT (inside compose the backend always uses 3306).
+      - "127.0.0.1:${DB_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # Runs once on a fresh volume: creates the test database.
+      - ./docker/mysql-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # 127.0.0.1 = over TCP. While the image sets up a fresh volume it runs a temporary server
+      # that only listens on a socket; pinging "localhost" would call that server "healthy".
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  backend:
+    # The image runs the migrations, then starts the server (see server/Dockerfile).
+    build: ./server
+    restart: on-failure
+    environment:
+      # "development" on purpose: this stack is a local demo over plain http, and in
+      # "production" the login cookie is Secure, which some browsers refuse on http://localhost.
+      NODE_ENV: development
+      PORT: 8080
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      TEST_DB_NAME: ${TEST_DB_NAME}
+      JWT_SECRET: ${JWT_SECRET}
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
+    volumes:
+      # The movie CSV (git-ignored) for: docker compose run --rm backend npm run import
+      - ./data:/data:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./client
+      args:
+        # The browser calls the backend through the published host port.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080}
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      - backend
+
+volumes:
+  mysql_data:
